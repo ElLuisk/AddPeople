@@ -5,11 +5,14 @@ import { supabase } from './supabaseClient';
 import { Toaster, toast } from 'react-hot-toast';
 import Modal from 'react-modal';
 
-// Importando nuestros componentes y el nuevo hook
+// Componentes
 import PersonaForm from './PersonaForm';
 import PersonasList from './PersonasList';
 import Pagination from './Pagination';
+
+// Hooks y Iconos
 import useDebounce from './useDebounce';
+import { FaSearch, FaTimes, FaFilter } from 'react-icons/fa';
 
 // Estilos para el modal
 const customModalStyles = {
@@ -42,9 +45,8 @@ function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [nombre, setNombre] = useState('');
   
-  // Estado para el término de búsqueda inmediato
+  // Estado para el término de búsqueda y su valor "debounced"
   const [searchTerm, setSearchTerm] = useState('');
-  // Hook para obtener el valor "debounced" tras 500ms
   const debouncedSearchTerm = useDebounce(searchTerm, 500);
 
   // Estados para modales
@@ -59,11 +61,9 @@ function App() {
 
   // Efecto para buscar cuando el término "debounced" cambia
   useEffect(() => {
-    // Si el usuario está buscando, siempre volvemos a la página 1
     if (currentPage !== 0) {
       setCurrentPage(0);
     } else {
-      // Si ya estamos en la página 0, forzamos la recarga
       getPersonas(0, debouncedSearchTerm);
     }
   }, [debouncedSearchTerm]);
@@ -100,18 +100,19 @@ function App() {
     setLoading(false);
   }
 
-  const openModal = (type, persona) => { setModalIsOpen(true); setModalType(type); setSelectedPerson(persona); if (type === 'edit') setCurrentNombre(persona.nombre); };
+  // Funciones para manejar los modales
+  const openModal = (type, persona) => { setModalIsOpen(true); setModalType(type); setSelectedPerson(persona); if (type === 'edit') { setCurrentNombre(persona.nombre); } };
   const closeModal = () => { setModalIsOpen(false); setModalType(null); setSelectedPerson(null); setCurrentNombre(''); };
 
+  // Funciones CRUD
   const handleRegister = async (e) => {
     e.preventDefault();
     if (!nombre.trim()) return;
     setIsProcessing(true);
-    const { data, error } = await supabase.from('personas').insert([{ nombre: nombre.trim() }]).select();
+    const { error } = await supabase.from('personas').insert([{ nombre: nombre.trim() }]);
     if (error) { toast.error('Error al registrar.'); } 
     else {
       toast.success('¡Persona registrada!');
-      // Vuelve a cargar los datos para reflejar el nuevo registro
       getPersonas(currentPage, debouncedSearchTerm);
       setNombre('');
     }
@@ -162,14 +163,36 @@ function App() {
       />
       
       <div className="w-full max-w-lg mt-4">
-        <div className="mb-4">
-          <input
-            type="text"
-            placeholder="Buscar en toda la base de datos..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full px-4 py-2 rounded bg-gray-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
-          />
+        <div className="flex items-center gap-2 mb-4">
+          <div className="relative flex-grow">
+            <span className="absolute inset-y-0 left-0 flex items-center pl-3">
+              <FaSearch className="text-gray-500" />
+            </span>
+            <input
+              type="text"
+              placeholder="Buscar..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-10 py-2 rounded bg-gray-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
+            />
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm('')}
+                className="absolute inset-y-0 right-0 flex items-center pr-3 text-gray-500 hover:text-white"
+                aria-label="Limpiar búsqueda"
+              >
+                <FaTimes />
+              </button>
+            )}
+          </div>
+          
+          <button
+            onClick={() => toast('Funcionalidad de filtros avanzados próximamente!')}
+            className="p-3 rounded bg-gray-700 hover:bg-gray-600 text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+            aria-label="Filtros avanzados"
+          >
+            <FaFilter />
+          </button>
         </div>
         
         <PersonasList
