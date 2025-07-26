@@ -5,12 +5,13 @@ import { supabase } from './supabaseClient';
 import { Toaster, toast } from 'react-hot-toast';
 import Modal from 'react-modal';
 
-// Importando nuestros componentes refactorizados
+// Importando nuestros componentes y el nuevo hook
 import PersonaForm from './PersonaForm';
 import PersonasList from './PersonasList';
 import Pagination from './Pagination';
+import useDebounce from './useDebounce';
 
-// Estilos para el modal, se mantienen igual
+// Estilos para el modal
 const customModalStyles = {
   content: {
     top: '50%',
@@ -32,44 +33,63 @@ const customModalStyles = {
   },
 };
 
-const ITEMS_PER_PAGE = 5; // Constante para la paginación
+const ITEMS_PER_PAGE = 5;
 
 function App() {
   // Estados de la aplicación
   const [personas, setPersonas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isProcessing, setIsProcessing] = useState(false);
-  
-  // Estados para formularios y búsqueda
   const [nombre, setNombre] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
   
+  // Estado para el término de búsqueda inmediato
+  const [searchTerm, setSearchTerm] = useState('');
+  // Hook para obtener el valor "debounced" tras 500ms
+  const debouncedSearchTerm = useDebounce(searchTerm, 500);
+
   // Estados para modales
   const [modalIsOpen, setModalIsOpen] = useState(false);
   const [modalType, setModalType] = useState(null);
   const [selectedPerson, setSelectedPerson] = useState(null);
   const [currentNombre, setCurrentNombre] = useState('');
-  
+
   // Estados para paginación
   const [currentPage, setCurrentPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
 
-  // Efecto para cargar los datos iniciales y al cambiar de página
+  // Efecto para buscar cuando el término "debounced" cambia
   useEffect(() => {
-    getPersonas(currentPage);
-  }, [currentPage]);
+    // Si el usuario está buscando, siempre volvemos a la página 1
+    if (currentPage !== 0) {
+      setCurrentPage(0);
+    } else {
+      // Si ya estamos en la página 0, forzamos la recarga
+      getPersonas(0, debouncedSearchTerm);
+    }
+  }, [debouncedSearchTerm]);
 
-  // Función para obtener los datos de una página específica
-  async function getPersonas(page) {
+  // Efecto para cambiar de página
+  useEffect(() => {
+    getPersonas(currentPage, debouncedSearchTerm);
+  }, [currentPage]);
+  
+  // Función principal para obtener los datos
+  async function getPersonas(page, searchTerm) {
     setLoading(true);
     const from = page * ITEMS_PER_PAGE;
     const to = from + ITEMS_PER_PAGE - 1;
 
-    const { data, error, count } = await supabase
+    let query = supabase
       .from('personas')
       .select('*', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(from, to);
+
+    if (searchTerm) {
+      query = query.ilike('nombre', `%${searchTerm}%`);
+    }
+
+    const { data, error, count } = await query;
 
     if (error) {
       toast.error('No se pudieron cargar los datos.');
@@ -80,40 +100,19 @@ function App() {
     setLoading(false);
   }
 
-  // Funciones para manejar los modales
-  const openModal = (type, persona) => {
-    setModalType(type);
-    setSelectedPerson(persona);
-    if (type === 'edit') {
-      setCurrentNombre(persona.nombre);
-    }
-    setModalIsOpen(true);
-  };
+  const openModal = (type, persona) => { setModalIsOpen(true); setModalType(type); setSelectedPerson(persona); if (type === 'edit') setCurrentNombre(persona.nombre); };
+  const closeModal = () => { setModalIsOpen(false); setModalType(null); setSelectedPerson(null); setCurrentNombre(''); };
 
-  const closeModal = () => {
-    setModalIsOpen(false);
-    setModalType(null);
-    setSelectedPerson(null);
-    setCurrentNombre('');
-  };
-
-  // Funciones CRUD (Create, Read, Update, Delete)
   const handleRegister = async (e) => {
     e.preventDefault();
     if (!nombre.trim()) return;
     setIsProcessing(true);
     const { data, error } = await supabase.from('personas').insert([{ nombre: nombre.trim() }]).select();
-    
-    if (error) {
-      toast.error('Error al registrar la persona.');
-    } else {
+    if (error) { toast.error('Error al registrar.'); } 
+    else {
       toast.success('¡Persona registrada!');
-      if (currentPage === 0) {
-        getPersonas(0);
-      } else {
-        // Si no estamos en la primera página, simplemente actualizamos el conteo total
-        setTotalCount(prevCount => prevCount + 1);
-      }
+      // Vuelve a cargar los datos para reflejar el nuevo registro
+      getPersonas(currentPage, debouncedSearchTerm);
       setNombre('');
     }
     setIsProcessing(false);
@@ -123,13 +122,10 @@ function App() {
     if (!selectedPerson) return;
     setIsProcessing(true);
     const { error } = await supabase.from('personas').delete().eq('id', selectedPerson.id);
-
-    if (error) {
-      toast.error('Error al eliminar la persona.');
-    } else {
+    if (error) { toast.error('Error al eliminar.'); }
+    else {
       toast.success('Persona eliminada.');
-      // Recargar la página actual para reflejar los cambios
-      getPersonas(currentPage);
+      getPersonas(currentPage, debouncedSearchTerm);
       closeModal();
     }
     setIsProcessing(false);
@@ -137,34 +133,21 @@ function App() {
 
   const handleUpdate = async (e) => {
     e.preventDefault();
-    if (!selectedPerson || !currentNombre.trim()) return;
+    if (!currentNombre.trim()) return;
     setIsProcessing(true);
-    const { data, error } = await supabase
-      .from('personas')
-      .update({ nombre: currentNombre.trim() })
-      .eq('id', selectedPerson.id)
-      .select();
-
-    if (error) {
-      toast.error('Error al actualizar el nombre.');
-    } else {
+    const { data, error } = await supabase.from('personas').update({ nombre: currentNombre.trim() }).eq('id', selectedPerson.id).select();
+    if (error) { toast.error('Error al actualizar.'); }
+    else {
       toast.success('Nombre actualizado.');
-      // Actualizamos la lista local directamente para no tener que recargar
-      setPersonas(personas.map((p) => (p.id === selectedPerson.id ? data[0] : p)));
+      setPersonas(personas.map(p => p.id === selectedPerson.id ? data[0] : p));
       closeModal();
     }
     setIsProcessing(false);
   };
 
-  // Función para manejar el cambio de página desde el componente Pagination
   const handlePageChange = (newPage) => {
     setCurrentPage(newPage);
   };
-
-  // Filtrado de los resultados de la página actual
-  const filteredPersonas = personas.filter((persona) =>
-    persona.nombre.toLowerCase().includes(searchTerm.toLowerCase())
-  );
 
   return (
     <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center p-8">
@@ -182,7 +165,7 @@ function App() {
         <div className="mb-4">
           <input
             type="text"
-            placeholder="Buscar en la página actual..."
+            placeholder="Buscar en toda la base de datos..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full px-4 py-2 rounded bg-gray-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
@@ -190,7 +173,7 @@ function App() {
         </div>
         
         <PersonasList
-          personas={filteredPersonas}
+          personas={personas}
           loading={loading}
           openModal={openModal}
           isProcessing={isProcessing}
@@ -210,34 +193,20 @@ function App() {
         {modalType === 'edit' && (
           <form onSubmit={handleUpdate}>
             <h2 className="text-2xl font-bold mb-4">Editar Nombre</h2>
-            <input
-              type="text"
-              value={currentNombre}
-              onChange={(e) => setCurrentNombre(e.target.value)}
-              autoFocus
-              className="w-full px-4 py-2 rounded bg-gray-700 mb-6 focus:outline-none focus:ring-2 focus:ring-purple-500"
-            />
+            <input type="text" value={currentNombre} onChange={(e) => setCurrentNombre(e.target.value)} autoFocus className="w-full px-4 py-2 rounded bg-gray-700 mb-6 focus:outline-none focus:ring-2 focus:ring-purple-500" />
             <div className="flex justify-end gap-4">
-              <button type="button" onClick={closeModal} className="px-4 py-2 rounded bg-gray-600 hover:bg-gray-500 font-semibold" disabled={isProcessing}>
-                Cancelar
-              </button>
-              <button type="submit" className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 font-semibold" disabled={isProcessing}>
-                {isProcessing ? 'Guardando...' : 'Guardar Cambios'}
-              </button>
+              <button type="button" onClick={closeModal} className="px-4 py-2 rounded bg-gray-600 hover:bg-gray-500 font-semibold" disabled={isProcessing}>Cancelar</button>
+              <button type="submit" className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 font-semibold" disabled={isProcessing}>{isProcessing ? 'Guardando...' : 'Guardar'}</button>
             </div>
           </form>
         )}
         {modalType === 'delete' && (
           <div>
             <h2 className="text-2xl font-bold mb-4">Confirmar Eliminación</h2>
-            <p className="mb-6">¿Estás seguro de que quieres eliminar a <strong className="font-bold text-purple-400">{selectedPerson?.nombre}</strong>? Esta acción no se puede deshacer.</p>
+            <p className="mb-6">¿Seguro que quieres eliminar a <strong className="font-bold text-purple-400">{selectedPerson?.nombre}</strong>?</p>
             <div className="flex justify-end gap-4">
-              <button onClick={closeModal} className="px-4 py-2 rounded bg-gray-600 hover:bg-gray-500 font-semibold" disabled={isProcessing}>
-                Cancelar
-              </button>
-              <button onClick={handleDelete} className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 font-semibold" disabled={isProcessing}>
-                {isProcessing ? 'Eliminando...' : 'Sí, Eliminar'}
-              </button>
+              <button onClick={closeModal} className="px-4 py-2 rounded bg-gray-600 hover:bg-gray-500 font-semibold" disabled={isProcessing}>Cancelar</button>
+              <button onClick={handleDelete} className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 font-semibold" disabled={isProcessing}>{isProcessing ? 'Eliminando...' : 'Sí, Eliminar'}</button>
             </div>
           </div>
         )}
